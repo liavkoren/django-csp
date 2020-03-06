@@ -22,7 +22,9 @@ except ImportError:
         """
         pass
 
-from csp.utils import build_policy
+from .utils import (
+    build_policy, DEFAULT_CSP_EXCLUDE_URL_PREFIXES,
+)
 
 
 class CSPMiddleware(MiddlewareMixin):
@@ -50,7 +52,8 @@ class CSPMiddleware(MiddlewareMixin):
             return response
 
         # Check for ignored path prefix.
-        prefixes = getattr(settings, 'CSP_EXCLUDE_URL_PREFIXES', ())
+        # TODO: Legacy setting
+        prefixes = getattr(settings, 'CSP_EXCLUDE_URL_PREFIXES', DEFAULT_CSP_EXCLUDE_URL_PREFIXES)
         if request.path_info.startswith(prefixes):
             return response
 

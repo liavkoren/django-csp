@@ -8,49 +8,139 @@ from itertools import chain
 from django.conf import settings
 from django.utils.encoding import force_str
 
+from .deprecation import (
+    CHILD_SRC_DEPRECATION_WARNING,
+    LEGACY_SETTINGS_NAMES_DEPRECATION_WARNING,
+)
 
-CHILD_SRC_DEPRECATION_WARNING = \
-    'child-src is deprecated in CSP v3. Use frame-src and worker-src.'
+
+DEFAULT_EXCLUDE_URL_PREFIXES = ()
+
+DEFAULT_POLICIES = ['default']
+
+DEFAULT_UPDATE_TEMPLATE = 'default'
+
+DEFAULT_POLICY_DEFINITIONS = {
+    'default': {
+        # Fetch Directives
+        'child-src': None,
+        'connect-src': None,
+        'default-src': ("'self'",),
+        'script-src': None,
+        'script-src-attr': None,
+        'script-src-elem': None,
+        'object-src': None,
+        'style-src': None,
+        'style-src-attr': None,
+        'style-src-elem': None,
+        'font-src': None,
+        'frame-src': None,
+        'img-src': None,
+        'manifest-src': None,
+        'media-src': None,
+        'prefetch-src': None,
+        'worker-src': None,
+        # Document Directives
+        'base-uri': None,
+        'plugin-types': None,
+        'sandbox': None,
+        # Navigation Directives
+        'form-action': None,
+        'frame-ancestors': None,
+        'navigate-to': None,
+        # Reporting Directives
+        'report-uri': None,
+        'report-to': None,
+        'require-sri-for': None,
+        # Other Directives
+        'upgrade-insecure-requests': False,
+        'block-all-mixed-content': False,
+        # Pseudo Directives
+        'report_only': False,
+        'include_nonce_in': ('default-src',),
+    }
+}
+
+HTTP_HEADERS = (
+    'Content-Security-Policy',
+    'Content-Security-Policy-Report-Only',
+)
+
+DIRECTIVES = set(DEFAULT_POLICY_DEFINITIONS['default'])
+PSEUDO_DIRECTIVES = {d for d in DIRECTIVES if '_' in d}
+
+# used in setting_to_directive (enables deletion updates via None)
+no_value = object()
+
+
+def setting_to_directive(setting, prefix='CSP_', value=no_value):
+    setting = setting[len(prefix):].lower()
+    if setting not in PSEUDO_DIRECTIVES:
+        setting = setting.replace('_', '-')
+    assert setting in DIRECTIVES
+
+    if value is not no_value:
+        if isinstance(value, str):
+            value = [value]
+        return setting, value
+    return setting
+
+
+def directive_to_setting(directive, prefix='CSP_'):
+    setting = '{}{}'.format(
+        prefix,
+        directive.replace('-', '_').upper()
+    )
+    return setting
+
+
+_LEGACY_SETTINGS = {
+    directive_to_setting(directive) for directive in DIRECTIVES
+}
+
+
+def _handle_legacy_settings(definitions, defer_to_legacy=True):
+    legacy_names = (
+        _LEGACY_SETTINGS
+        & set(s for s in dir(settings) if s.startswith('CSP_'))
+    )
+    if not legacy_names:
+        return
+
+    warnings.warn(
+        LEGACY_SETTINGS_NAMES_DEPRECATION_WARNING % ', '.join(legacy_names),
+        DeprecationWarning,
+    )
+
+    csp = definitions['default']
+    legacy_csp = (
+        setting_to_directive(name, value=getattr(settings, name))
+        for name in legacy_names
+    )
+    if defer_to_legacy:
+        csp.update(legacy_csp)
+    else:
+        csp.update((key, val) for key, val in legacy_csp if key not in csp)
 
 
 def from_settings():
-    return {
-        # Fetch Directives
-        'child-src': getattr(settings, 'CSP_CHILD_SRC', None),
-        'connect-src': getattr(settings, 'CSP_CONNECT_SRC', None),
-        'default-src': getattr(settings, 'CSP_DEFAULT_SRC', ["'self'"]),
-        'script-src': getattr(settings, 'CSP_SCRIPT_SRC', None),
-        'script-src-attr': getattr(settings, 'CSP_SCRIPT_SRC_ATTR', None),
-        'script-src-elem': getattr(settings, 'CSP_SCRIPT_SRC_ELEM', None),
-        'object-src': getattr(settings, 'CSP_OBJECT_SRC', None),
-        'style-src': getattr(settings, 'CSP_STYLE_SRC', None),
-        'style-src-attr': getattr(settings, 'CSP_STYLE_SRC_ATTR', None),
-        'style-src-elem': getattr(settings, 'CSP_STYLE_SRC_ELEM', None),
-        'font-src': getattr(settings, 'CSP_FONT_SRC', None),
-        'frame-src': getattr(settings, 'CSP_FRAME_SRC', None),
-        'img-src': getattr(settings, 'CSP_IMG_SRC', None),
-        'manifest-src': getattr(settings, 'CSP_MANIFEST_SRC', None),
-        'media-src': getattr(settings, 'CSP_MEDIA_SRC', None),
-        'prefetch-src': getattr(settings, 'CSP_PREFETCH_SRC', None),
-        'worker-src': getattr(settings, 'CSP_WORKER_SRC', None),
-        # Document Directives
-        'base-uri': getattr(settings, 'CSP_BASE_URI', None),
-        'plugin-types': getattr(settings, 'CSP_PLUGIN_TYPES', None),
-        'sandbox': getattr(settings, 'CSP_SANDBOX', None),
-        # Navigation Directives
-        'form-action': getattr(settings, 'CSP_FORM_ACTION', None),
-        'frame-ancestors': getattr(settings, 'CSP_FRAME_ANCESTORS', None),
-        'navigate-to': getattr(settings, 'CSP_NAVIGATE_TO', None),
-        # Reporting Directives
-        'report-uri': getattr(settings, 'CSP_REPORT_URI', None),
-        'report-to': getattr(settings, 'CSP_REPORT_TO', None),
-        'require-sri-for': getattr(settings, 'CSP_REQUIRE_SRI_FOR', None),
-        # Other Directives
-        'upgrade-insecure-requests': getattr(
-            settings, 'CSP_UPGRADE_INSECURE_REQUESTS', False),
-        'block-all-mixed-content': getattr(
-            settings, 'CSP_BLOCK_ALL_MIXED_CONTENT', False),
-    }
+    policies = getattr(settings, 'CSP_POLICIES', DEFAULT_POLICIES)
+    definitions = csp_definitions_update({}, DEFAULT_POLICY_DEFINITIONS)
+    custom_definitions = getattr(
+        settings,
+        'CSP_POLICY_DEFINITIONS',
+        {'default': {}},
+    )
+     # Technically we're modifying Django settings here,
+     # but it shouldn't matter since the end result of either will be the same
+    _handle_legacy_settings(custom_definitions)
+    for name, csp in custom_definitions.items():
+        definitions[name].update(csp)
+    # TODO: Error handling
+    # TODO: Remove in October 2020 when ordered dicts are the default
+    return OrderedDict(
+        (name, definitions[name]) for name in policies
+    )
 
 
 def build_policy(config=None, update=None, replace=None, nonce=None):
@@ -178,3 +268,16 @@ def build_script_tag(content=None, **kwargs):
     c = _unwrap_script(content) if content and not kwargs.get('src') else ''
     attrs = ATTR_FORMAT_STR.format(**data).rstrip()
     return ('<script{}>{}</script>'.format(attrs, c).strip())
+
+
+def kwarg_to_directive(kwarg, value=None):
+    return setting_to_directive(kwarg, prefix='', value=value)
+
+
+def csp_definitions_update(csp_definitions, other):
+    """ Update one csp defnitions dictionary with another """
+    if isinstance(other, dict):
+        other = other.items()
+    for name, csp in other:
+        csp_definitions.setdefault(name, {}).update(csp)
+    return csp_definitions
