@@ -5,6 +5,7 @@ from itertools import chain
 from .utils import (
     iter_policies,
     policy_names,
+    _policies_from_names_and_kwargs,
 )
 
 
@@ -17,8 +18,12 @@ def csp_exempt(f):
     return _wrapped
 
 
-def csp_update(**kwargs):
-    update = dict((k.lower().replace('_', '-'), v) for k, v in kwargs.items())
+def csp_update(csp_names=('default',), policy_definitions=None, **kwargs):
+    update = _policies_from_names_and_kwargs(
+        csp_names,
+        policy_definitions,
+        **kwargs,
+    )
 
     def decorator(f):
         @wraps(f)
