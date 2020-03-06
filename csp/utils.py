@@ -6,6 +6,7 @@ from collections import OrderedDict
 from itertools import chain
 
 from django.conf import settings
+from django.utils.crypto import get_random_string
 from django.utils.encoding import force_str
 
 from .deprecation import (
@@ -368,6 +369,13 @@ def kwarg_to_directive(kwarg, value=None):
     return setting_to_directive(kwarg, prefix='', value=value)
 
 
+def _clean_input_policy(policy):
+    return dict(
+        kwarg_to_directive(in_directive, value=value)
+        for in_directive, value in policy.items()
+    )
+
+
 def csp_definitions_update(csp_definitions, other):
     """ Update one csp defnitions dictionary with another """
     if isinstance(other, dict):
@@ -375,3 +383,67 @@ def csp_definitions_update(csp_definitions, other):
     for name, csp in other:
         csp_definitions.setdefault(name, {}).update(csp)
     return csp_definitions
+
+
+def policy_names(length=20):
+    while True:
+        yield  get_random_string(length)
+policy_names = policy_names()
+
+
+def iter_policies(policies):
+    """
+    Accepts the following formats:
+    - a policy dictionary (formatted like in settings.CSP_POLICY_DEFINITIONS)
+    - an iterable of policies: (item, item, item,...)
+
+    item can be any of the following:
+        - string representing a named policy in settings.CSP_POLICY_DEFINITIONS
+        - subscriptable two-tuple: (name, csp)
+        - csp dictionary which will be assigned a random name
+
+    Yields a tuple: (name, csp)
+    """
+    if isinstance(policies, dict):
+        yield from (
+            (name, _clean_input_policy(policy))
+            for name, policy in policies.items()
+        )
+        return
+
+    for policy in policies:
+        if isinstance(policy, str):
+            # Named policies will be handled by the middleware
+            yield (policy, {})
+        elif isinstance(policy, (list, tuple)):
+            yield (policy[0], _clean_input_policy(policy[1]))
+        else:  # dictionary containing a single csp
+            yield (next(policy_names), _clean_input_policy(policy))
+
+
+def _policies_from_names_and_kwargs(
+    csp_names=('default',),
+    csp_definitions=None,
+    **kwargs,
+):
+    """
+    Helper used in csp_update and csp_replace to process args
+    """
+    if csp_definitions:
+        csp_definitions = csp_definitions_update(kwargs, csp_definitions)
+
+    if csp_names is None:
+        update = csp_definitions
+
+    if not kwargs:
+        update = OrderedDict(
+            # We don't need to fetch the config
+            # since the append logic handles this
+            (name, None) for name in update
+        )
+    else:
+        # Legacy behaviour + bulk update support
+        update = OrderedDict(iter_policies(
+            (csp_name, kwargs) for csp_name in csp_names
+        ))
+    return update

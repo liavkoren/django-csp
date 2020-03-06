@@ -1,4 +1,12 @@
+from collections import OrderedDict
 from functools import wraps
+from itertools import chain
+
+from .utils import (
+    iter_policies,
+    policy_names,
+)
+
 
 def csp_exempt(f):
     @wraps(f)
@@ -35,12 +43,33 @@ def csp_replace(**kwargs):
     return decorator
 
 
-def csp(**kwargs):
-    config = dict(
-        (k.lower().replace('_', '-'), [v] if isinstance(v, str) else v)
-        for k, v
-        in kwargs.items()
-    )
+def csp(policies=(), policy_definitions=None, **kwargs):
+    policies = iter_policies(tuple(policies))
+
+    if kwargs and not isinstance(next(iter(kwargs.values())), dict):
+        # Single-policy kwargs is the legacy behaviour (deprecate?)
+        # TODO: single-policy format isn't currently supported for policy_dict
+
+        policy_name = next(policy_names)
+        if policy_definitions:
+            policy_definitions[policy_name] = kwargs
+        else:
+            policy_definitions = [(policy_name, kwargs)]
+    elif policy_definitions:
+        duplicates = set(kwargs) & set(policy_definitions)
+        if duplicates:
+            raise TypeError(  # TypeError because python does it
+                "csp decorator got multiple policy definitions "
+                "for the same name: %s" % ', '.join(duplicates)
+            )
+        policy_definitions.update(kwargs)
+    else:
+        policy_definitions = kwargs
+
+    config = OrderedDict(chain(
+        iter_policies(policy_definitions),
+        policies,
+    ))
 
     def decorator(f):
         @wraps(f)
