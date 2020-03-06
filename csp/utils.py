@@ -143,38 +143,131 @@ def from_settings():
     )
 
 
-def build_policy(config=None, update=None, replace=None, nonce=None):
-    """Builds the policy as a string from the settings."""
+def _normalize_config(config, key='default'):
+    """
+    Permits the config to be a single policy, which will be returned under the
+    'default' key by default.
+    """
+    if config is None:
+        return {}
+    if not config:
+        return config
 
+    if not isinstance(next(iter(config.values())), dict):
+        return {'default': config}
+    return config
+
+
+def build_policy(
+    config=None,
+    update=None,
+    replace=None,
+    nonce=None,
+    order=None,
+):
+    """
+    Builds the policy from the settings as a list of tuples:
+    (policy_string<str>, report_only<bool>)
+    """
     if config is None:
         config = from_settings()
+    else:
+        config = _normalize_config(config)
         # Be careful, don't mutate config as it could be from settings
+    update = _normalize_config(update)
+    replace = _normalize_config(replace)
 
-    update = update if update is not None else {}
-    replace = replace if replace is not None else {}
-    csp = {}
+    policies = OrderedDict()
+    for name, policy in config.items():
+        new_policy = _replace_policy(policy, replace.get(name, {}))
+        update_policy = update.get(name)
+        if update_policy is not None:
+            _update_policy(new_policy, update_policy)
+        policies[name] = new_policy
+    _append_policies(policies, update, config)
 
-    for k in set(chain(config, replace)):
-        if k in replace:
-            v = replace[k]
+    if order:  # empty order not permitted: use csp_exempt instead
+        policies = (policies[index_or_name] for index_or_name in order)
+    else:
+        policies = policies.values()
+
+    return [_compile_policy(csp, nonce=nonce) for csp in policies]
+
+
+def _append_policies(policies, append, config=None):
+    if config is None:
+        config = {}
+    for key, append_csp in append.items():
+        if key in policies:
+            continue
+
+        if key in config and not append_csp:
+            csp = config[key].copy()
         else:
-            v = config[k]
-        if v is not None:
-            v = copy.copy(v)
-            if not isinstance(v, (list, tuple)):
-                v = (v,)
-            csp[k] = v
+            # TODO: design decision
+            append_template = getattr(
+                settings,
+                'CSP_UPDATE_TEMPLATE',
+                DEFAULT_UPDATE_TEMPLATE,
+            )
+            if append_template is None:
+                csp = {}
+            elif append_template in config:
+                csp = config[append_template]
+            else:
+                # TODO: Error Handling
+                csp = DEFAULT_POLICIES[append_template]
+        _update_policy(csp, append_csp)
+        policies[key] = csp
 
+
+def _update_policy(csp, update):
     for k, v in update.items():
         if v is not None:
+            if k in PSEUDO_DIRECTIVES:
+                csp[k] = v
+                continue
+
             if not isinstance(v, (list, tuple)):
                 v = (v,)
+
             if csp.get(k) is None:
                 csp[k] = v
             else:
                 csp[k] += tuple(v)
 
-    report_uri = csp.pop('report-uri', None)
+
+def _replace_policy(csp, replace):
+    new_policy = {}
+    for k in set(chain(csp, replace)):
+        if k in replace:
+            v = replace[k]
+        else:
+            v = csp[k]
+        if v is not None:
+            if k in PSEUDO_DIRECTIVES:
+                new_policy[k] = v
+                continue
+            v = copy.copy(v)
+            if not isinstance(v, (list, tuple)):
+                v = (v,)
+            new_policy[k] = v
+    return new_policy
+
+
+def _compile_policy(csp, nonce=None):
+    report_uri = csp.pop(
+        'report-uri',
+        DEFAULT_POLICY_DEFINITIONS['default']['report-uri'],
+    )
+    report_only = csp.pop(
+        'report_only',
+        DEFAULT_POLICY_DEFINITIONS['default']['report_only'],
+    )
+    include_nonce_in = csp.pop(
+        'include_nonce_in',
+        DEFAULT_POLICY_DEFINITIONS['default']['include_nonce_in']
+    )
 
     policy_parts = {}
     for key, value in csp.items():
@@ -194,15 +287,16 @@ def build_policy(config=None, update=None, replace=None, nonce=None):
         policy_parts['report-uri'] = ' '.join(report_uri)
 
     if nonce:
-        include_nonce_in = getattr(settings, 'CSP_INCLUDE_NONCE_IN',
-                                   ['default-src'])
         for section in include_nonce_in:
             policy = policy_parts.get(section, '')
             policy_parts[section] = ("%s %s" %
                                      (policy, "'nonce-%s'" % nonce)).strip()
 
-    return '; '.join(['{} {}'.format(k, val).strip()
-                      for k, val in policy_parts.items()])
+    policy_string = '; '.join(
+        '{} {}'.format(k, val).strip() for k, val in policy_parts.items()
+    )
+
+    return policy_string, report_only
 
 
 def _default_attr_mapper(attr_name, val):
