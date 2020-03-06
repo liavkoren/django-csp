@@ -35,8 +35,12 @@ def csp_update(csp_names=('default',), policy_definitions=None, **kwargs):
     return decorator
 
 
-def csp_replace(**kwargs):
-    replace = dict((k.lower().replace('_', '-'), v) for k, v in kwargs.items())
+def csp_replace(csp_names=('default',), policy_definitions=None, **kwargs):
+    replace = _policies_from_names_and_kwargs(
+        csp_names,
+        policy_definitions,
+        **kwargs,
+    )
 
     def decorator(f):
         @wraps(f)
