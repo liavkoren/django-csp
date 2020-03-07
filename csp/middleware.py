@@ -1,5 +1,6 @@
 from __future__ import absolute_import
 
+from collections import defaultdict
 from functools import partial
 
 from django.conf import settings
@@ -23,8 +24,14 @@ except ImportError:
         pass
 
 from .utils import (
-    build_policy, DEFAULT_CSP_EXCLUDE_URL_PREFIXES,
+    build_policy, DEFAULT_EXCLUDE_URL_PREFIXES, HTTP_HEADERS,
 )
+
+
+EXEMPTED_DEBUG_CODES = {
+    http_client.INTERNAL_SERVER_ERROR,
+    http_client.NOT_FOUND,
+}
 
 
 class CSPMiddleware(MiddlewareMixin):
@@ -53,35 +60,47 @@ class CSPMiddleware(MiddlewareMixin):
 
         # Check for ignored path prefix.
         # TODO: Legacy setting
-        prefixes = getattr(settings, 'CSP_EXCLUDE_URL_PREFIXES', DEFAULT_CSP_EXCLUDE_URL_PREFIXES)
+        prefixes = getattr(
+            settings,
+            'CSP_EXCLUDE_URL_PREFIXES',
+            DEFAULT_EXCLUDE_URL_PREFIXES,
+        )
         if request.path_info.startswith(prefixes):
             return response
 
         # Check for debug view
-        status_code = response.status_code
-        exempted_debug_codes = (
-            http_client.INTERNAL_SERVER_ERROR,
-            http_client.NOT_FOUND,
-        )
-        if status_code in exempted_debug_codes and settings.DEBUG:
+        if response.status_code in EXEMPTED_DEBUG_CODES and settings.DEBUG:
             return response
 
-        header = 'Content-Security-Policy'
-        if getattr(settings, 'CSP_REPORT_ONLY', False):
-            header += '-Report-Only'
-
-        if header in response:
+        existing_headers = {
+            header for header in HTTP_HEADERS if header in response
+        }
+        if len(existing_headers) == len(HTTP_HEADERS):
             # Don't overwrite existing headers.
             return response
 
-        response[header] = self.build_policy(request, response)
+        # These won't be ordered properly on Cpython 3.5 or below
+        # (out of support October 2020)
+        headers = defaultdict(list)
 
+        for csp, report_only in self.build_policy(request, response):
+            header = HTTP_HEADERS[int(report_only)]
+            if header in existing_headers:  # don't overwrite
+                continue
+            headers[header].append(csp)
+
+        for header, policies in headers.items():
+            # TODO: Design Decision do we want the optional whitespace?
+            # Maybe only in DEBUG mode?
+            response[header] = ', '.join(policies)
         return response
 
     def build_policy(self, request, response):
-        config = getattr(response, '_csp_config', None)
-        update = getattr(response, '_csp_update', None)
-        replace = getattr(response, '_csp_replace', None)
-        nonce = getattr(request, '_csp_nonce', None)
-        return build_policy(config=config, update=update, replace=replace,
-                            nonce=nonce)
+        build_kwargs = {
+            key: getattr(response, '_csp_%s' % key, None)
+            for key in ('config', 'update', 'replace', 'order')
+        }
+        return build_policy(
+            nonce=getattr(request, '_csp_nonce', None),
+            **build_kwargs,
+        )
