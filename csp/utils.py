@@ -9,124 +9,33 @@ from django.conf import settings
 from django.utils.crypto import get_random_string
 from django.utils.encoding import force_str
 
-from .deprecation import (
-    CHILD_SRC_DEPRECATION_WARNING,
-    LEGACY_SETTINGS_NAMES_DEPRECATION_WARNING,
+try:
+    from django.utils.six.moves import http_client
+except ImportError:
+    # django 3.x removed six
+    import http.client as http_client
+
+from .conf import (
+    defaults, deprecation,
+    setting_to_directive, PSEUDO_DIRECTIVES,
 )
 
-
-DEFAULT_EXCLUDE_URL_PREFIXES = ()
-
-DEFAULT_POLICIES = ['default']
-
-DEFAULT_UPDATE_TEMPLATE = 'default'
-
-DEFAULT_POLICY_DEFINITIONS = {
-    'default': {
-        # Fetch Directives
-        'child-src': None,
-        'connect-src': None,
-        'default-src': ("'self'",),
-        'script-src': None,
-        'script-src-attr': None,
-        'script-src-elem': None,
-        'object-src': None,
-        'style-src': None,
-        'style-src-attr': None,
-        'style-src-elem': None,
-        'font-src': None,
-        'frame-src': None,
-        'img-src': None,
-        'manifest-src': None,
-        'media-src': None,
-        'prefetch-src': None,
-        'worker-src': None,
-        # Document Directives
-        'base-uri': None,
-        'plugin-types': None,
-        'sandbox': None,
-        # Navigation Directives
-        'form-action': None,
-        'frame-ancestors': None,
-        'navigate-to': None,
-        # Reporting Directives
-        'report-uri': None,
-        'report-to': None,
-        'require-sri-for': None,
-        # Other Directives
-        'upgrade-insecure-requests': False,
-        'block-all-mixed-content': False,
-        # Pseudo Directives
-        'report_only': False,
-        'include_nonce_in': ('default-src',),
-    }
-}
 
 HTTP_HEADERS = (
     'Content-Security-Policy',
     'Content-Security-Policy-Report-Only',
 )
 
-DIRECTIVES = set(DEFAULT_POLICY_DEFINITIONS['default'])
-PSEUDO_DIRECTIVES = {d for d in DIRECTIVES if '_' in d}
 
-# used in setting_to_directive (enables deletion updates via None)
-no_value = object()
-
-
-def setting_to_directive(setting, prefix='CSP_', value=no_value):
-    setting = setting[len(prefix):].lower()
-    if setting not in PSEUDO_DIRECTIVES:
-        setting = setting.replace('_', '-')
-    assert setting in DIRECTIVES
-
-    if value is not no_value:
-        if isinstance(value, str):
-            value = [value]
-        return setting, value
-    return setting
-
-
-def directive_to_setting(directive, prefix='CSP_'):
-    setting = '{}{}'.format(
-        prefix,
-        directive.replace('-', '_').upper()
-    )
-    return setting
-
-
-_LEGACY_SETTINGS = {
-    directive_to_setting(directive) for directive in DIRECTIVES
+EXEMPTED_DEBUG_CODES = {
+    http_client.INTERNAL_SERVER_ERROR,
+    http_client.NOT_FOUND,
 }
 
 
-def _handle_legacy_settings(definitions, defer_to_legacy=True):
-    legacy_names = (
-        _LEGACY_SETTINGS
-        & set(s for s in dir(settings) if s.startswith('CSP_'))
-    )
-    if not legacy_names:
-        return
-
-    warnings.warn(
-        LEGACY_SETTINGS_NAMES_DEPRECATION_WARNING % ', '.join(legacy_names),
-        DeprecationWarning,
-    )
-
-    csp = definitions['default']
-    legacy_csp = (
-        setting_to_directive(name, value=getattr(settings, name))
-        for name in legacy_names
-    )
-    if defer_to_legacy:
-        csp.update(legacy_csp)
-    else:
-        csp.update((key, val) for key, val in legacy_csp if key not in csp)
-
-
 def from_settings():
-    policies = getattr(settings, 'CSP_POLICIES', DEFAULT_POLICIES)
-    definitions = csp_definitions_update({}, DEFAULT_POLICY_DEFINITIONS)
+    policies = getattr(settings, 'CSP_POLICIES', defaults.POLICIES)
+    definitions = csp_definitions_update({}, defaults.POLICY_DEFINITIONS)
     custom_definitions = getattr(
         settings,
         'CSP_POLICY_DEFINITIONS',
@@ -134,7 +43,7 @@ def from_settings():
     )
      # Technically we're modifying Django settings here,
      # but it shouldn't matter since the end result of either will be the same
-    _handle_legacy_settings(custom_definitions)
+    deprecation._handle_legacy_settings(custom_definitions)
     for name, csp in custom_definitions.items():
         definitions[name].update(csp)
     # TODO: Error handling
@@ -209,7 +118,7 @@ def _append_policies(policies, append, config=None):
             append_template = getattr(
                 settings,
                 'CSP_UPDATE_TEMPLATE',
-                DEFAULT_UPDATE_TEMPLATE,
+                defaults.UPDATE_TEMPLATE,
             )
             if append_template is None:
                 csp = {}
@@ -217,7 +126,7 @@ def _append_policies(policies, append, config=None):
                 csp = config[append_template]
             else:
                 # TODO: Error Handling
-                csp = DEFAULT_POLICIES[append_template]
+                csp = defaults.POLICIES[append_template]
         _update_policy(csp, append_csp)
         policies[key] = csp
 
@@ -259,15 +168,15 @@ def _replace_policy(csp, replace):
 def _compile_policy(csp, nonce=None):
     report_uri = csp.pop(
         'report-uri',
-        DEFAULT_POLICY_DEFINITIONS['default']['report-uri'],
+        defaults.POLICY_DEFINITIONS['default']['report-uri'],
     )
     report_only = csp.pop(
         'report_only',
-        DEFAULT_POLICY_DEFINITIONS['default']['report_only'],
+        defaults.POLICY_DEFINITIONS['default']['report_only'],
     )
     include_nonce_in = csp.pop(
         'include_nonce_in',
-        DEFAULT_POLICY_DEFINITIONS['default']['include_nonce_in']
+        defaults.POLICY_DEFINITIONS['default']['include_nonce_in']
     )
 
     policy_parts = {}
@@ -281,7 +190,10 @@ def _compile_policy(csp, nonce=None):
             policy_parts[key] = ' '.join(value)
 
         if key == 'child-src':
-            warnings.warn(CHILD_SRC_DEPRECATION_WARNING, DeprecationWarning)
+            warnings.warn(
+                deprecation.CHILD_SRC_DEPRECATION_WARNING,
+                DeprecationWarning,
+            )
 
     if report_uri:
         report_uri = map(force_str, report_uri)

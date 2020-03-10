@@ -8,12 +8,6 @@ from django.utils.crypto import get_random_string
 from django.utils.functional import SimpleLazyObject
 
 try:
-    from django.utils.six.moves import http_client
-except ImportError:
-    # django 3.x removed six
-    import http.client as http_client
-
-try:
     from django.utils.deprecation import MiddlewareMixin
 except ImportError:
     class MiddlewareMixin(object):
@@ -23,15 +17,10 @@ except ImportError:
         """
         pass
 
+from .conf import defaults
 from .utils import (
-    build_policy, DEFAULT_EXCLUDE_URL_PREFIXES, HTTP_HEADERS,
+    build_policy, HTTP_HEADERS, EXEMPTED_DEBUG_CODES,
 )
-
-
-EXEMPTED_DEBUG_CODES = {
-    http_client.INTERNAL_SERVER_ERROR,
-    http_client.NOT_FOUND,
-}
 
 
 class CSPMiddleware(MiddlewareMixin):
@@ -63,7 +52,7 @@ class CSPMiddleware(MiddlewareMixin):
         prefixes = getattr(
             settings,
             'CSP_EXCLUDE_URL_PREFIXES',
-            DEFAULT_EXCLUDE_URL_PREFIXES,
+            defaults.EXCLUDE_URL_PREFIXES,
         )
         if request.path_info.startswith(prefixes):
             return response
