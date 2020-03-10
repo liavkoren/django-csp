@@ -18,6 +18,20 @@ def csp_exempt(f):
     return _wrapped
 
 
+def csp_reorder(order):
+    # supports reordering and trimming
+    # accepts an iterable of names or indexes
+
+    def decorator(f):
+        @wraps(f)
+        def _wrapped(*a, **kw):
+            r = f(*a, **kw)
+            r._csp_order = order
+            return r
+        return _wrapped
+    return decorator
+
+
 def csp_update(csp_names=('default',), policy_definitions=None, **kwargs):
     update = _policies_from_names_and_kwargs(
         csp_names,
