@@ -42,5 +42,7 @@ class NoncedScript(Extension):
         request = ctx.get('request')
         kwargs['nonce'] = request.csp_nonce
         kwargs['content'] = caller().strip()
+        if 'async' in kwargs:
+            kwargs['async_attr'] = kwargs.pop('async')
 
         return build_script_tag(**kwargs)

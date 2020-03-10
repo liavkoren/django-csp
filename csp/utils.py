@@ -169,6 +169,8 @@ def _unwrap_script(text):
 
 def build_script_tag(content=None, **kwargs):
     data = {}
+    if 'async_attr' in kwargs:
+        kwargs['async'] = kwargs.pop('async_attr')
     # Iterate all possible script attrs instead of kwargs to make
     # interpolation as easy as possible below
     for attr_name, mapper in SCRIPT_ATTRS.items():

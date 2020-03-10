@@ -39,6 +39,8 @@ class NonceScriptNode(template.Node):
         output = self.nodelist.render(context).strip()
         request = context.get('request')
         nonce = request.csp_nonce if hasattr(request, 'csp_nonce') else ''
-        self.script_attrs.update({'nonce': nonce, 'content': output})
-
-        return build_script_tag(**self.script_attrs)
+        kwargs = self.script_attrs
+        kwargs.update({'nonce': nonce, 'content': output})
+        if 'async' in kwargs:
+            kwargs['async_attr'] = kwargs.pop('async')
+        return build_script_tag(**kwargs)
