@@ -385,10 +385,17 @@ def csp_definitions_update(csp_definitions, other):
     return csp_definitions
 
 
-def policy_names(length=20):
-    while True:
-        yield  get_random_string(length)
-policy_names = policy_names()
+class PolicyNames:
+    length = 20
+    last_policy_name = None
+
+    def __next__(self):
+        self.last_policy_name = get_random_string(self.length)
+        return self.last_policy_name
+
+    def __iter__(self):
+        return self
+policy_names = PolicyNames()
 
 
 def iter_policies(policies):

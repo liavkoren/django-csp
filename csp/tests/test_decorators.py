@@ -4,6 +4,7 @@ from django.test.utils import override_settings
 
 from csp.decorators import csp, csp_replace, csp_update, csp_exempt
 from csp.middleware import CSPMiddleware
+from csp.utils import policy_names
 
 
 REQUEST = RequestFactory().get('/')
@@ -31,7 +32,7 @@ def test_csp_update():
     def view_with_decorator(request):
         return HttpResponse()
     response = view_with_decorator(REQUEST)
-    assert response._csp_update == {'img-src': 'bar.com'}
+    assert dict(response._csp_update) == {'default': {'img-src': ['bar.com']}}
     mw.process_response(REQUEST, response)
     policy_list = sorted(response['Content-Security-Policy'].split("; "))
     assert policy_list == ["default-src 'self'", "img-src foo.com bar.com"]
@@ -55,7 +56,7 @@ def test_csp_replace():
     def view_with_decorator(request):
         return HttpResponse()
     response = view_with_decorator(REQUEST)
-    assert response._csp_replace == {'img-src': 'bar.com'}
+    assert dict(response._csp_replace) == {'default': {'img-src': ['bar.com']}}
     mw.process_response(REQUEST, response)
     policy_list = sorted(response['Content-Security-Policy'].split("; "))
     assert policy_list == ["default-src 'self'", "img-src bar.com"]
@@ -86,8 +87,12 @@ def test_csp():
     def view_with_decorator(request):
         return HttpResponse()
     response = view_with_decorator(REQUEST)
-    assert response._csp_config == \
-        {'img-src': ['foo.com'], 'font-src': ['bar.com']}
+    assert response._csp_config == {
+        policy_names.last_policy_name: {
+            'img-src': ['foo.com'],
+            'font-src': ['bar.com'],
+        }
+    }
     mw.process_response(REQUEST, response)
     policy_list = sorted(response['Content-Security-Policy'].split("; "))
     assert policy_list == ["font-src bar.com", "img-src foo.com"]
@@ -104,8 +109,12 @@ def test_csp_string_values():
     def view_with_decorator(request):
         return HttpResponse()
     response = view_with_decorator(REQUEST)
-    assert response._csp_config == \
-        {'img-src': ['foo.com'], 'font-src': ['bar.com']}
+    assert dict(response._csp_config) == {
+        policy_names.last_policy_name: {
+            'img-src': ['foo.com'],
+            'font-src': ['bar.com'],
+        }
+    }
     mw.process_response(REQUEST, response)
     policy_list = sorted(response['Content-Security-Policy'].split("; "))
     assert policy_list == ["font-src bar.com", "img-src foo.com"]
