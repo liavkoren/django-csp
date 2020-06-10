@@ -12,7 +12,7 @@ from csp.utils import build_policy
 def policy_eq(a, b, msg='%r != %r', report_only=False):
     if not isinstance(a, list):
         a = [(a, report_only)]
-    if not isinstance(a, list):
+    if not isinstance(b, list):
         b = [(b, report_only)]
 
     for csp_a, csp_b in zip(a, b):
